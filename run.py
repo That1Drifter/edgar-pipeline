@@ -16,6 +16,9 @@ Batch mode (10+ companies, 50% cheaper):
 Options:
     --form 10-K|10-Q    Filing type (default: 10-K)
     --batch             Use Message Batches API (cheaper, higher latency)
+    --strict            Enable strict tool schemas (API-enforced output)
+    --stream            Real-time streaming output (single company only)
+    --think             Enable extended thinking on analyzer (multi-company)
     --quiet             Suppress iteration-level output
 """
 
@@ -50,6 +53,9 @@ def main():
     form_type = "10-K"
     verbose = True
     batch_mode = False
+    strict = False
+    stream = False
+    think = False
     i = 1
     while i < len(sys.argv):
         if sys.argv[i] == "--form" and i + 1 < len(sys.argv):
@@ -60,6 +66,15 @@ def main():
             i += 1
         elif sys.argv[i] == "--batch":
             batch_mode = True
+            i += 1
+        elif sys.argv[i] == "--strict":
+            strict = True
+            i += 1
+        elif sys.argv[i] == "--stream":
+            stream = True
+            i += 1
+        elif sys.argv[i] == "--think":
+            think = True
             i += 1
         elif not sys.argv[i].startswith("--"):
             companies.append(sys.argv[i])
@@ -83,26 +98,63 @@ def main():
     print(f"  Filing:    {form_type}")
     if batch_mode:
         mode = "batch (Message Batches API)"
+    elif stream and len(companies) == 1:
+        mode = "streaming extraction"
     elif len(companies) > 1:
         mode = "multi-agent coordinator"
     else:
         mode = "single extraction"
     print(f"  Mode:      {mode}")
+    if strict:
+        print(f"  Strict:    enabled (API-enforced schema)")
+    if think:
+        print(f"  Thinking:  enabled (extended reasoning on analyzer)")
     print(f"{'=' * 60}")
 
     if batch_mode:
-        run_batch_mode(companies, form_type, verbose)
+        run_batch_mode(companies, form_type, verbose, strict)
+    elif stream and len(companies) == 1:
+        run_stream(companies[0], form_type, strict)
     elif len(companies) == 1:
-        run_single(companies[0], form_type, verbose)
+        run_single(companies[0], form_type, verbose, strict)
     else:
-        run_multi(companies, form_type, verbose)
+        run_multi(companies, form_type, verbose, strict, think)
 
 
-def run_batch_mode(companies: list, form_type: str, verbose: bool):
+def run_stream(company: str, form_type: str, strict: bool = False):
+    """Streaming extraction — real-time output."""
+    from agents.extractor_stream import run_extraction_stream
+    from agents.extractor import save_result
+
+    result = run_extraction_stream(company, form_type, strict=strict)
+    print(f"\n{'=' * 60}")
+
+    if result["status"] == "success":
+        print_extraction(result["data"], result["iterations"])
+        path = save_result(result)
+        print(f"\n  Saved to: {path}")
+
+        from review import check_needs_review
+        reasons = check_needs_review({"status": "success", "data": result["data"]})
+        if reasons:
+            print(f"\n  Flagged for review ({len(reasons)} reason(s)):")
+            for r in reasons:
+                print(f"    - {r}")
+    else:
+        print(f"  EXTRACTION FAILED: {result.get('message', 'Unknown error')}")
+
+    if result.get("cost"):
+        print(f"{'─' * 60}")
+        print(result["cost"].summary())
+
+    print(f"{'=' * 60}\n")
+
+
+def run_batch_mode(companies: list, form_type: str, verbose: bool, strict: bool = False):
     """Batch processing — uses Message Batches API for bulk extraction."""
     from agents.batch import run_batch
 
-    result = run_batch(companies, form_type, verbose=verbose)
+    result = run_batch(companies, form_type, verbose=verbose, strict=strict)
 
     if result.get("status") == "success":
         # Save all results
@@ -142,11 +194,11 @@ def run_batch_mode(companies: list, form_type: str, verbose: bool):
     print(f"{'=' * 60}\n")
 
 
-def run_single(company: str, form_type: str, verbose: bool):
+def run_single(company: str, form_type: str, verbose: bool, strict: bool = False):
     """Single company extraction — uses the direct extractor agent."""
     from agents.extractor import run_extraction, save_result
 
-    result = run_extraction(company, form_type, verbose=verbose)
+    result = run_extraction(company, form_type, verbose=verbose, strict=strict)
     print(f"\n{'=' * 60}")
 
     if result["status"] == "success":
@@ -164,10 +216,16 @@ def run_single(company: str, form_type: str, verbose: bool):
     else:
         print(f"  EXTRACTION FAILED: {result.get('message', 'Unknown error')}")
 
+    # Cost summary
+    if result.get("cost"):
+        print(f"{'─' * 60}")
+        print(result["cost"].summary())
+
     print(f"{'=' * 60}\n")
 
 
-def run_multi(companies: list, form_type: str, verbose: bool):
+def run_multi(companies: list, form_type: str, verbose: bool, strict: bool = False,
+              think: bool = False):
     """Multi-company comparison — uses coordinator + subagents."""
     from agents.coordinator import run_coordinator
 
@@ -180,7 +238,7 @@ def run_multi(companies: list, form_type: str, verbose: bool):
         f"profitability, assets, and risk factors."
     )
 
-    result = run_coordinator(query, verbose=verbose)
+    result = run_coordinator(query, verbose=verbose, strict=strict, think=think)
     print(f"\n{'=' * 60}")
 
     if result.get("status") == "success":
@@ -197,6 +255,11 @@ def run_multi(companies: list, form_type: str, verbose: bool):
         print(f"\n  Saved to: {path}")
     else:
         print(f"  ANALYSIS FAILED: {result.get('message', result.get('error', 'Unknown'))}")
+
+    # Cost summary
+    if result.get("cost"):
+        print(f"{'─' * 60}")
+        print(result["cost"].summary())
 
     print(f"{'=' * 60}\n")
 

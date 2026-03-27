@@ -120,7 +120,8 @@ TOOLS = [
                         "value": { "type": ["number", "null"], "description": "Dollar amount, or null if not found" },
                         "unit": { "type": "string", "enum": ["dollars", "thousands", "millions", "billions"], "description": "Unit scale as stated in the filing" },
                         "label": { "type": ["string", "null"], "description": "Exact label used in the filing (e.g. 'Net Sales', 'Total Revenue')" },
-                        "confidence": { "type": "number", "description": "0.0-1.0. Use 0.9+ for clearly printed values, 0.6-0.8 for values requiring interpretation, below 0.5 for inferred" }
+                        "confidence": { "type": "number", "description": "0.0-1.0. Use 0.9+ for clearly printed values, 0.6-0.8 for values requiring interpretation, below 0.5 for inferred" },
+                        "source_section": { "type": ["string", "null"], "description": "Filing section where this value was found (e.g. 'Consolidated Statements of Operations')" }
                     },
                     "required": ["value", "unit", "confidence"]
                 },
@@ -131,7 +132,8 @@ TOOLS = [
                         "value": { "type": ["number", "null"], "description": "Dollar amount, or null if not found. Use negative for net loss." },
                         "unit": { "type": "string", "enum": ["dollars", "thousands", "millions", "billions"] },
                         "label": { "type": ["string", "null"], "description": "Exact label used in the filing" },
-                        "confidence": { "type": "number", "description": "0.0-1.0" }
+                        "confidence": { "type": "number", "description": "0.0-1.0" },
+                        "source_section": { "type": ["string", "null"], "description": "Filing section where this value was found" }
                     },
                     "required": ["value", "unit", "confidence"]
                 },
@@ -141,7 +143,8 @@ TOOLS = [
                     "properties": {
                         "value": { "type": ["number", "null"] },
                         "unit": { "type": "string", "enum": ["dollars", "thousands", "millions", "billions"] },
-                        "confidence": { "type": "number" }
+                        "confidence": { "type": "number" },
+                        "source_section": { "type": ["string", "null"], "description": "Filing section where this value was found" }
                     },
                     "required": ["value", "unit", "confidence"]
                 },
@@ -151,7 +154,8 @@ TOOLS = [
                     "properties": {
                         "value": { "type": ["number", "null"] },
                         "unit": { "type": "string", "enum": ["dollars", "thousands", "millions", "billions"] },
-                        "confidence": { "type": "number" }
+                        "confidence": { "type": "number" },
+                        "source_section": { "type": ["string", "null"], "description": "Filing section where this value was found" }
                     },
                     "required": ["value", "unit", "confidence"]
                 },
@@ -202,6 +206,196 @@ TOOLS = [
         }
     },
 ]
+
+
+# ─── Strict Tool Schemas ─────────────────────────────────────────────
+# Strict mode (Phase 4): guarantees API-level schema compliance.
+# Requires: additionalProperties: false, all properties in required,
+# anyOf for nullable types instead of type arrays.
+#
+# The first 3 tools (lookup, get_filings, fetch_filing) are simple enough
+# that strict mode adds no value. Only extract_financials gets the strict variant.
+
+def _nullable(schema: dict) -> dict:
+    """Convert a type to strict-mode nullable: anyOf with null."""
+    return {"anyOf": [schema, {"type": "null"}]}
+
+EXTRACT_FINANCIALS_STRICT = {
+    "name": "extract_financials",
+    "strict": True,
+    "description": (
+        "Submit extracted financial data from a 10-K or 10-Q filing. "
+        "Call this tool AFTER reading a filing with fetch_filing. "
+        "Extract the values directly from the filing text — do not estimate "
+        "or calculate values that aren't explicitly stated. Use null for any "
+        "field where the value is not clearly present in the document."
+    ),
+    "input_schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "company_name": {
+                "type": "string",
+                "description": "Official company name as stated in the filing"
+            },
+            "ticker": _nullable({"type": "string", "description": "Stock ticker symbol, or null if not found"}),
+            "form_type": {
+                "type": "string",
+                "enum": ["10-K", "10-Q"]
+            },
+            "period_end": _nullable({"type": "string", "description": "Fiscal period end date in YYYY-MM-DD format, or null if unclear"}),
+            "fiscal_year": _nullable({"type": "integer", "description": "Fiscal year (e.g. 2024), or null if not stated"}),
+            "revenue": {
+                "type": "object",
+                "additionalProperties": False,
+                "description": "Total revenue / net sales",
+                "properties": {
+                    "value": _nullable({"type": "number", "description": "Dollar amount, or null if not found"}),
+                    "unit": {"type": "string", "enum": ["dollars", "thousands", "millions", "billions"], "description": "Unit scale as stated in the filing"},
+                    "label": _nullable({"type": "string", "description": "Exact label used in the filing (e.g. 'Net Sales', 'Total Revenue')"}),
+                    "confidence": {"type": "number", "description": "0.0-1.0. Use 0.9+ for clearly printed values, 0.6-0.8 for values requiring interpretation, below 0.5 for inferred"},
+                    "source_section": _nullable({"type": "string", "description": "Filing section where this value was found (e.g. 'Consolidated Statements of Operations')"})
+                },
+                "required": ["value", "unit", "label", "confidence", "source_section"]
+            },
+            "net_income": {
+                "type": "object",
+                "additionalProperties": False,
+                "description": "Net income / net earnings",
+                "properties": {
+                    "value": _nullable({"type": "number", "description": "Dollar amount, or null if not found. Use negative for net loss."}),
+                    "unit": {"type": "string", "enum": ["dollars", "thousands", "millions", "billions"]},
+                    "label": _nullable({"type": "string", "description": "Exact label used in the filing"}),
+                    "confidence": {"type": "number", "description": "0.0-1.0"},
+                    "source_section": _nullable({"type": "string", "description": "Filing section where this value was found"})
+                },
+                "required": ["value", "unit", "label", "confidence", "source_section"]
+            },
+            "total_assets": {
+                "type": "object",
+                "additionalProperties": False,
+                "description": "Total assets from the balance sheet",
+                "properties": {
+                    "value": _nullable({"type": "number"}),
+                    "unit": {"type": "string", "enum": ["dollars", "thousands", "millions", "billions"]},
+                    "confidence": {"type": "number"},
+                    "source_section": _nullable({"type": "string", "description": "Filing section where this value was found"})
+                },
+                "required": ["value", "unit", "confidence", "source_section"]
+            },
+            "total_liabilities": {
+                "type": "object",
+                "additionalProperties": False,
+                "description": "Total liabilities from the balance sheet",
+                "properties": {
+                    "value": _nullable({"type": "number"}),
+                    "unit": {"type": "string", "enum": ["dollars", "thousands", "millions", "billions"]},
+                    "confidence": {"type": "number"},
+                    "source_section": _nullable({"type": "string", "description": "Filing section where this value was found"})
+                },
+                "required": ["value", "unit", "confidence", "source_section"]
+            },
+            "eps": {
+                "type": "object",
+                "additionalProperties": False,
+                "description": "Earnings per share (diluted preferred)",
+                "properties": {
+                    "value": _nullable({"type": "number"}),
+                    "diluted": _nullable({"type": "boolean", "description": "True if diluted EPS, false if basic, null if unclear"}),
+                    "confidence": {"type": "number"}
+                },
+                "required": ["value", "diluted", "confidence"]
+            },
+            "risk_factors": {
+                "type": "array",
+                "description": "Top 3-5 risk factors mentioned in the filing. Empty array if section not found.",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "title": {"type": "string", "description": "Risk factor heading or summary"},
+                        "category": {
+                            "type": "string",
+                            "enum": ["market", "regulatory", "operational", "financial", "legal", "technology", "competitive", "other"],
+                            "description": "Category. Use 'other' if none of the standard categories fit."
+                        },
+                        "category_detail": _nullable({"type": "string", "description": "If category is 'other', describe the actual category here"})
+                    },
+                    "required": ["title", "category", "category_detail"]
+                }
+            },
+            "notes": _nullable({"type": "string", "description": "Any issues, ambiguities, or conflicts found during extraction"}),
+            "conflict_detected": {
+                "type": "boolean",
+                "description": "True if conflicting values were found in the document"
+            }
+        },
+        "required": [
+            "company_name", "ticker", "form_type", "period_end", "fiscal_year",
+            "revenue", "net_income", "total_assets", "total_liabilities", "eps",
+            "risk_factors", "notes", "conflict_detected"
+        ]
+    }
+}
+
+# TOOLS_STRICT: same first 3 tools + strict extract_financials
+TOOLS_STRICT = TOOLS[:3] + [EXTRACT_FINANCIALS_STRICT]
+
+
+def get_cached_tools(strict: bool = False) -> list:
+    """Return tool list with cache_control on the last tool.
+
+    Caching the tools array means the 2nd+ API call in a session
+    (or 2nd+ subagent) reuses the cached tool definitions, saving
+    ~90% on those input tokens.
+    """
+    import copy
+    source = TOOLS_STRICT if strict else TOOLS
+    tools = copy.deepcopy(source)
+    # Cache breakpoint on the last tool — caches everything up to and including it
+    tools[-1]["cache_control"] = {"type": "ephemeral"}
+    return tools
+
+
+def make_citation_tool_result(tool_use_id: str, filing_text: str,
+                              source_url: str, truncated: bool) -> dict:
+    """Build a tool_result with a document block for citation support.
+
+    Instead of passing filing text as a plain string, wraps it in a
+    document content block with citations enabled. Claude will cite
+    specific sections when extracting values.
+    """
+    return {
+        "type": "tool_result",
+        "tool_use_id": tool_use_id,
+        "content": [
+            {
+                "type": "document",
+                "source": {
+                    "type": "text",
+                    "media_type": "text/plain",
+                    "data": filing_text,
+                },
+                "title": f"SEC Filing ({source_url.split('/')[-1]})",
+                "citations": {"enabled": True},
+            }
+        ],
+    }
+
+
+def make_cached_system(prompt: str) -> list:
+    """Convert a system prompt string to a cached content block array.
+
+    The Claude API accepts system as either a string or a list of
+    content blocks. Using a list lets us attach cache_control.
+    """
+    return [
+        {
+            "type": "text",
+            "text": prompt,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
 
 
 # ─── Tool Handlers ────────────────────────────────────────────────────

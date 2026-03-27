@@ -21,7 +21,8 @@ import sys
 import io
 from anthropic import Anthropic
 from agents.subagents import run_researcher, run_analyzer
-from tools.definitions import TOOLS
+from tools.definitions import TOOLS, make_cached_system
+from costs import CostTracker
 
 if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -133,13 +134,20 @@ RULES:
 - Never fabricate data — if a researcher returns partial results, flag the gaps"""
 
 
-def run_coordinator(query: str, verbose: bool = True) -> dict:
+def run_coordinator(query: str, verbose: bool = True, strict: bool = False,
+                    think: bool = False) -> dict:
     """
     Run the coordinator to handle a user query.
 
     The coordinator spawns subagents and routes data between them.
     """
     client = Anthropic()
+    tracker = CostTracker(MODEL)
+    system = make_cached_system(COORDINATOR_SYSTEM)
+    # Cache coordinator tools
+    import copy
+    coord_tools = copy.deepcopy(COORDINATOR_TOOLS)
+    coord_tools[-1]["cache_control"] = {"type": "ephemeral"}
     messages = [{"role": "user", "content": query}]
 
     iteration = 0
@@ -156,10 +164,11 @@ def run_coordinator(query: str, verbose: bool = True) -> dict:
         response = client.messages.create(
             model=MODEL,
             max_tokens=4096,
-            system=COORDINATOR_SYSTEM,
-            tools=COORDINATOR_TOOLS,
+            system=system,
+            tools=coord_tools,
             messages=messages,
         )
+        tracker.track(response.usage)
 
         if verbose:
             print(f"  stop_reason: {response.stop_reason}")
@@ -199,7 +208,12 @@ def run_coordinator(query: str, verbose: bool = True) -> dict:
                         print(f"  {'=' * 50}")
 
                     # ── Spawn researcher subagent ──
-                    result = run_researcher(company, form_type, verbose=verbose)
+                    result = run_researcher(company, form_type, verbose=verbose,
+                                            strict=strict)
+
+                    # Merge subagent cost into coordinator total
+                    if result.get("cost"):
+                        tracker.merge(result["cost"])
 
                     if verbose:
                         status = result.get("status", "?")
@@ -227,7 +241,12 @@ def run_coordinator(query: str, verbose: bool = True) -> dict:
                         print(f"  {'=' * 50}")
 
                     # ── Spawn analyzer subagent ──
-                    result = run_analyzer(findings, analysis_type, focus_areas, verbose=verbose)
+                    result = run_analyzer(findings, analysis_type, focus_areas,
+                                          verbose=verbose, think=think)
+
+                    # Merge analyzer cost
+                    if result.get("cost"):
+                        tracker.merge(result["cost"])
 
                     if verbose:
                         print(f"  Analyzer returned: {result.get('status', '?')}")
@@ -249,4 +268,6 @@ def run_coordinator(query: str, verbose: bool = True) -> dict:
         if verbose:
             print(f"\n  Coordinator hit iteration cap.")
 
-    return final_result or {"status": "no_result", "iterations": iteration}
+    result = final_result or {"status": "no_result", "iterations": iteration}
+    result["cost"] = tracker
+    return result

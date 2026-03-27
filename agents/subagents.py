@@ -17,7 +17,10 @@ import json
 import sys
 import io
 from anthropic import Anthropic
-from tools.definitions import TOOLS, handle_tool_call
+from tools.definitions import (TOOLS, TOOLS_STRICT, handle_tool_call,
+                               get_cached_tools, make_cached_system,
+                               make_citation_tool_result)
+from costs import CostTracker
 
 if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -29,7 +32,8 @@ MODEL = "claude-sonnet-4-20250514"
 # Tools: lookup_company, get_filings, fetch_filing, extract_financials
 # This is the same tool set as Phase 1, but now scoped to a subagent role.
 
-RESEARCHER_TOOLS = TOOLS  # All 4 EDGAR tools
+RESEARCHER_TOOLS = TOOLS          # All 4 EDGAR tools
+RESEARCHER_TOOLS_STRICT = TOOLS_STRICT  # Strict variant
 
 RESEARCHER_SYSTEM = """You are a financial data researcher. Your job is to look up a
 specific company's SEC filing and extract structured financial data from it.
@@ -53,7 +57,8 @@ EXTRACTION RULES:
 MAX_RESEARCHER_ITERATIONS = 15
 
 
-def run_researcher(company: str, form_type: str = "10-K", verbose: bool = True) -> dict:
+def run_researcher(company: str, form_type: str = "10-K", verbose: bool = True,
+                   strict: bool = False) -> dict:
     """
     Run a researcher subagent for a single company.
 
@@ -61,6 +66,9 @@ def run_researcher(company: str, form_type: str = "10-K", verbose: bool = True) 
     (not the raw user query) with explicit scope.
     """
     client = Anthropic()
+    tools = get_cached_tools(strict=strict)
+    system = make_cached_system(RESEARCHER_SYSTEM)
+    tracker = CostTracker(MODEL)
 
     # Task-specific prompt — crafted by the coordinator, not the raw user query
     # This is the explicit context passing pattern (D1 Task 1.3)
@@ -87,10 +95,11 @@ def run_researcher(company: str, form_type: str = "10-K", verbose: bool = True) 
         response = client.messages.create(
             model=MODEL,
             max_tokens=4096,
-            system=RESEARCHER_SYSTEM,
-            tools=RESEARCHER_TOOLS,
+            system=system,
+            tools=tools,
             messages=messages,
         )
+        tracker.track(response.usage)
 
         if verbose:
             print(f"    [researcher:{company}] stop_reason: {response.stop_reason} | "
@@ -129,6 +138,23 @@ def run_researcher(company: str, form_type: str = "10-K", verbose: bool = True) 
                             if retry_count > 2:
                                 extraction_result = block.input
 
+                    # Citation support: wrap fetch_filing in document block
+                    if block.name == "fetch_filing":
+                        try:
+                            filing_data = json.loads(result_str)
+                            if "text" in filing_data:
+                                tool_results.append(
+                                    make_citation_tool_result(
+                                        block.id,
+                                        filing_data["text"],
+                                        filing_data.get("source_url", ""),
+                                        filing_data.get("truncated", False),
+                                    )
+                                )
+                                continue
+                        except json.JSONDecodeError:
+                            pass
+
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
@@ -148,6 +174,7 @@ def run_researcher(company: str, form_type: str = "10-K", verbose: bool = True) 
             "form_type": form_type,
             "data": extraction_result,
             "iterations": iteration,
+            "cost": tracker,
         }
     else:
         # Structured error context (D5 Task 5.3)
@@ -160,6 +187,7 @@ def run_researcher(company: str, form_type: str = "10-K", verbose: bool = True) 
             "is_retryable": True,
             "iterations": iteration,
             "partial_results": None,
+            "cost": tracker,
         }
 
 
@@ -260,6 +288,9 @@ data from researcher agents and produce structured analysis reports.
 
 You do NOT have access to SEC filings or search tools. Work only with the data provided.
 
+IMPORTANT: You MUST call the save_report tool with your complete analysis. Do not
+respond with text only — always produce a structured report via save_report.
+
 RULES:
 - Preserve source attribution — every claim must trace to a specific company's filing
 - Flag data quality issues: note which values had low confidence scores
@@ -271,7 +302,8 @@ RULES:
 MAX_ANALYZER_ITERATIONS = 8
 
 
-def run_analyzer(findings: list, analysis_type: str, focus_areas: list = None, verbose: bool = True) -> dict:
+def run_analyzer(findings: list, analysis_type: str, focus_areas: list = None,
+                 verbose: bool = True, think: bool = False) -> dict:
     """
     Run the analyzer subagent to synthesize researcher findings.
 
@@ -279,6 +311,12 @@ def run_analyzer(findings: list, analysis_type: str, focus_areas: list = None, v
     has no access to prior context or EDGAR tools.
     """
     client = Anthropic()
+    tracker = CostTracker(MODEL)
+    analyzer_system = make_cached_system(ANALYZER_SYSTEM)
+    # Cache analyzer tools — cache_control on last tool
+    import copy
+    analyzer_tools = copy.deepcopy(ANALYZER_TOOLS)
+    analyzer_tools[-1]["cache_control"] = {"type": "ephemeral"}
 
     # Build the task-specific prompt with ALL context included explicitly
     # This is the structured data passing pattern (D1 Task 1.3)
@@ -303,21 +341,54 @@ def run_analyzer(findings: list, analysis_type: str, focus_areas: list = None, v
         if verbose:
             print(f"    [analyzer] iteration {iteration}")
 
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=4096,
-            system=ANALYZER_SYSTEM,
-            tools=ANALYZER_TOOLS,
-            # Force tool call — analyzer MUST produce structured output
-            tool_choice={"type": "any"},
-            messages=messages,
-        )
+        # Extended thinking requires tool_choice: auto (incompatible with "any")
+        # When thinking is off, we can still force tool use with "any"
+        create_kwargs = {
+            "model": MODEL,
+            "max_tokens": 16000 if think else 4096,
+            "system": analyzer_system,
+            "tools": analyzer_tools,
+            "tool_choice": {"type": "auto"} if think else {"type": "any"},
+            "messages": messages,
+        }
+        if think:
+            create_kwargs["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": 10000,
+            }
+
+        response = client.messages.create(**create_kwargs)
+        tracker.track(response.usage)
 
         if verbose:
             print(f"    [analyzer] stop_reason: {response.stop_reason} | "
                   f"tokens: {response.usage.input_tokens}+{response.usage.output_tokens}")
 
+            # Log thinking blocks if present
+            for block in response.content:
+                if block.type == "thinking":
+                    thinking_text = getattr(block, "thinking", "")
+                    if thinking_text:
+                        preview = thinking_text[:150].replace("\n", " ")
+                        print(f"    [analyzer] thinking: {preview}...")
+
         if response.stop_reason == "end_turn":
+            # With thinking + tool_choice: auto, the model might respond with
+            # text instead of a tool call. If it produced a save_report call
+            # in the content, extract it; otherwise continue the loop to let
+            # it try again.
+            found_report = False
+            for block in response.content:
+                if block.type == "tool_use" and block.name == "save_report":
+                    report = block.input
+                    found_report = True
+            if found_report:
+                break
+            # If thinking mode and no tool call, append response and let it continue
+            if think and iteration < MAX_ANALYZER_ITERATIONS:
+                messages.append({"role": "assistant", "content": response.content})
+                messages.append({"role": "user", "content": "Please call the save_report tool with your analysis."})
+                continue
             break
 
         elif response.stop_reason == "tool_use":
@@ -333,7 +404,8 @@ def run_analyzer(findings: list, analysis_type: str, focus_areas: list = None, v
             break
 
     if report:
-        return {"status": "success", "report": report, "iterations": iteration}
+        return {"status": "success", "report": report, "iterations": iteration,
+                "cost": tracker}
     else:
         return {
             "status": "failed",
@@ -341,4 +413,5 @@ def run_analyzer(findings: list, analysis_type: str, focus_areas: list = None, v
             "error_category": "analysis_failure",
             "is_retryable": True,
             "iterations": iteration,
+            "cost": tracker,
         }
