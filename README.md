@@ -99,7 +99,8 @@ The coordinator cannot call EDGAR tools directly (hub-and-spoke pattern). Each s
 | **Citations** | Filing text as document blocks with source attribution | automatic |
 | **Cost tracking** | Per-call token counting with cost summary | automatic |
 | **Hooks** | Pre-call audit logging + PII blocking; post-call normalization | automatic |
-| **Human review** | Flags extractions with confidence < 0.5 or validation errors | automatic |
+| **Human review** | Flags low-confidence extractions; dashboard UI for approve/reject/escalate | automatic |
+| **Dashboard** | Dark-themed web UI for browsing results, reviewing, tracking costs | `dashboard.py` |
 
 ## Setup
 
@@ -109,7 +110,7 @@ cd edgar-pipeline
 
 python -m venv venv
 source venv/bin/activate
-pip install anthropic
+pip install anthropic flask
 
 echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 
@@ -147,7 +148,7 @@ Browse extraction results, compare companies, review flagged items, track costs,
 | Overview | Stats cards, recent extractions, success rate |
 | Extractions | Browse all results with financial data and confidence bars |
 | Comparisons | Multi-company comparison reports |
-| Review Queue | Priority-sorted flagged items |
+| Review Queue | Approve/Reject/Escalate flagged items with notes, inline extracted data |
 | Costs | Per-run cost breakdown with bar charts, cache savings |
 | Audit Log | Filterable tool call history |
 
