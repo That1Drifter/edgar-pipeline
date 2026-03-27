@@ -19,6 +19,7 @@ Options:
     --strict            Enable strict tool schemas (API-enforced output)
     --stream            Real-time streaming output (single company only)
     --think             Enable extended thinking on analyzer (multi-company)
+    --model MODEL       Model to use (default: claude-sonnet-4-20250514)
     --quiet             Suppress iteration-level output
 """
 
@@ -76,6 +77,9 @@ def main():
         elif sys.argv[i] == "--think":
             think = True
             i += 1
+        elif sys.argv[i] == "--model" and i + 1 < len(sys.argv):
+            os.environ["EDGAR_MODEL"] = sys.argv[i + 1]
+            i += 2
         elif not sys.argv[i].startswith("--"):
             companies.append(sys.argv[i])
             i += 1
@@ -94,8 +98,10 @@ def main():
 
     print(f"{'=' * 60}")
     print(f"  SEC EDGAR Extraction Pipeline")
+    model = os.environ.get("EDGAR_MODEL", "claude-sonnet-4-20250514")
     print(f"  Companies: {', '.join(companies)}")
     print(f"  Filing:    {form_type}")
+    print(f"  Model:     {model}")
     if batch_mode:
         mode = "batch (Message Batches API)"
     elif stream and len(companies) == 1:

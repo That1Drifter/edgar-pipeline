@@ -54,6 +54,7 @@ run.py                      CLI entry point
 ├── hooks.py                Pre/post tool call hooks (audit, PII, normalization)
 ├── costs.py                Token counting and cost tracking
 ├── review.py               Human review routing for low-confidence extractions
+├── dashboard.py            Local web dashboard (Flask, dark theme)
 └── output/                 Results, audit log, review queue
 ```
 
@@ -98,7 +99,8 @@ The coordinator cannot call EDGAR tools directly (hub-and-spoke pattern). Each s
 | **Citations** | Filing text as document blocks with source attribution | automatic |
 | **Cost tracking** | Per-call token counting with cost summary | automatic |
 | **Hooks** | Pre-call audit logging + PII blocking; post-call normalization | automatic |
-| **Human review** | Flags extractions with confidence < 0.5 or validation errors | automatic |
+| **Human review** | Flags low-confidence extractions; dashboard UI for approve/reject/escalate | automatic |
+| **Dashboard** | Dark-themed web UI for browsing results, reviewing, tracking costs | `dashboard.py` |
 
 ## Setup
 
@@ -108,7 +110,7 @@ cd edgar-pipeline
 
 python -m venv venv
 source venv/bin/activate
-pip install anthropic
+pip install anthropic flask
 
 echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 
@@ -125,19 +127,39 @@ python run.py --batch "Apple Inc" "Tesla Inc" "NVIDIA"  # batch mode (50% cheape
 python run.py --stream "Apple Inc"                      # streaming output
 python run.py --strict "Apple Inc"                      # strict schema enforcement
 python run.py --think "Apple Inc" "Tesla Inc"           # extended thinking on analysis
+python run.py --model claude-haiku-4-5-20251001 "Apple Inc"  # use Haiku (~$0.01)
 python run.py --quiet "Apple Inc"                       # suppress iteration output
 ```
 
 Flags can be combined: `--strict --stream`, `--strict --think`, etc.
 
+### Dashboard
+
+```bash
+pip install flask
+python dashboard.py
+# Open http://localhost:5000
+```
+
+Browse extraction results, compare companies, review flagged items, track costs, and inspect the audit log — all in a dark-themed web UI.
+
+| Page | Content |
+|------|---------|
+| Overview | Stats cards, recent extractions, success rate |
+| Extractions | Browse all results with financial data and confidence bars |
+| Comparisons | Multi-company comparison reports |
+| Review Queue | Approve/Reject/Escalate flagged items with notes, inline extracted data |
+| Costs | Per-run cost breakdown with bar charts, cache savings |
+| Audit Log | Filterable tool call history |
+
 ## Cost
 
 | Mode | Cost per company | Notes |
 |------|-----------------|-------|
-| Single (Sonnet) | ~$0.29 | With prompt caching |
-| Multi-company | ~$0.12/company + $0.05 coordinator | Caching reduces repeat costs |
-| Batch | ~$0.06/company | 50% API discount, single-turn |
-| Haiku (dev) | ~$0.01 | Change MODEL constant in agent files |
+| Single (Sonnet) | ~$0.23-0.29 | With prompt caching, varies by filing size |
+| Multi-company | ~$0.30/company + $0.05 coordinator | Each researcher is a full extraction |
+| Batch | ~$0.03/company | 50% API discount, single-turn, no retry loop |
+| Haiku (dev) | ~$0.01 | `--model claude-haiku-4-5-20251001` |
 
 ## Output
 

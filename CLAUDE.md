@@ -21,6 +21,7 @@ run.py                      CLI entry point (single, multi, batch, streaming)
 ├── hooks.py                PreToolCall + PostToolUse hook system
 ├── review.py               Human review routing (confidence-based flagging)
 ├── costs.py                Token counting, CostTracker, price constants
+├── dashboard.py            Local web dashboard (Flask, reads output/)
 └── output/                 Extraction results, audit log, review queue (gitignored)
 ```
 
@@ -68,6 +69,11 @@ wsl -d Ubuntu -- bash -c "cd /home/that1drifter/edgar-pipeline && /home/that1dri
 
 # Batch mode (Message Batches API)
 wsl -d Ubuntu -- bash -c "cd /home/that1drifter/edgar-pipeline && /home/that1drifter/edgar-venv/bin/python run.py --batch 'Apple Inc' 'Tesla Inc' 'Microsoft Corp'"
+
+# Dashboard (runs on Windows, reads output/)
+pip install flask
+python dashboard.py
+# Open http://localhost:5000
 ```
 
 Sync files from Windows before running:
@@ -77,11 +83,13 @@ wsl -d Ubuntu -- bash -c "cp /mnt/c/Users/Drifter/Desktop/edgar-pipeline/agents/
 
 ## Cost
 
-- ~$0.29/run Sonnet with caching, ~$0.01/run Haiku
-- Multi-company: ~$0.12 per company + ~$0.05 for coordinator + analyzer
-- Batch mode: ~$0.06 per company (50% Batches API discount, single-turn)
-- Caching saves ~$0.05/run on repeated system+tool tokens
-- MODEL constant in agents/extractor.py, agents/subagents.py, agents/coordinator.py, agents/batch.py
+- ~$0.23-0.29/run Sonnet with caching (verified against billing CSV)
+- ~$0.01/run Haiku (use --model flag)
+- Multi-company: ~$0.30 per company + ~$0.05 for coordinator + analyzer
+- Batch mode: ~$0.03 per company (50% API discount, single-turn)
+- Caching saves ~$0.03-0.05/run on repeated system+tool tokens
+- Total project spend through March 27: $2.05 across ~7 runs
+- Override model: --model flag or EDGAR_MODEL env var
 
 ## Git workflow
 
