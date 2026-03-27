@@ -14,7 +14,7 @@ import json
 import glob
 import os
 from datetime import datetime
-from flask import Flask, render_template_string, request, abort
+from flask import Flask, render_template_string, request, abort, redirect, url_for, jsonify
 
 app = Flask(__name__)
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
@@ -72,6 +72,30 @@ def load_review_queue():
         "review_queue": {"total_processed": 0, "needs_review": 0, "passed": 0, "items": []},
         "passed": []
     }
+
+
+REVIEW_DECISIONS_FILE = os.path.join(OUTPUT_DIR, "review_decisions.json")
+
+
+def load_review_decisions():
+    try:
+        with open(REVIEW_DECISIONS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_review_decision(company, decision, notes=""):
+    decisions = load_review_decisions()
+    decisions[company] = {
+        "decision": decision,
+        "notes": notes,
+        "reviewed_at": datetime.utcnow().isoformat() + "Z",
+    }
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    with open(REVIEW_DECISIONS_FILE, "w", encoding="utf-8") as f:
+        json.dump(decisions, f, indent=2)
+    return decisions[company]
 
 
 def load_audit_log(limit=100, offset=0, event_filter=None):
@@ -524,34 +548,115 @@ def review_queue():
     review = load_review_queue()
     rq = review.get("review_queue", {})
     items = rq.get("items", [])
+    decisions = load_review_decisions()
+
+    # Split items into pending and decided
+    pending = [i for i in items if i.get("company") not in decisions]
+    decided = [i for i in items if i.get("company") in decisions]
+
     content = render_template_string("""
     <h1>Review Queue</h1>
     <div class="cards" style="margin-bottom:2rem">
         <div class="card"><div class="label">Total Processed</div><div class="value">{{ rq.total_processed }}</div></div>
-        <div class="card"><div class="label">Needs Review</div><div class="value" style="color:var(--yellow)">{{ rq.needs_review }}</div></div>
-        <div class="card"><div class="label">Passed</div><div class="value" style="color:var(--green)">{{ rq.passed }}</div></div>
+        <div class="card"><div class="label">Pending Review</div><div class="value" style="color:var(--yellow)">{{ pending|length }}</div></div>
+        <div class="card"><div class="label">Reviewed</div><div class="value" style="color:var(--green)">{{ decided|length }}</div></div>
+        <div class="card"><div class="label">Passed (auto)</div><div class="value">{{ rq.passed }}</div></div>
     </div>
-    {% if items %}
-    <table>
-        <tr><th>Priority</th><th>Company</th><th>Status</th><th>Reasons</th></tr>
-        {% for item in items %}
-        <tr>
-            <td><span class="priority {% if item.priority >= 8 %}priority-high{% elif item.priority >= 4 %}priority-med{% else %}priority-low{% endif %}">{{ item.priority }}</span></td>
-            <td>{{ item.company }}</td>
-            <td><span class="badge badge-{{ item.status }}">{{ item.status }}</span></td>
-            <td>
-                {% for r in item.reasons %}
-                <div style="font-size:0.85rem;margin-bottom:0.25rem">{{ r }}</div>
+
+    {% if pending %}
+    <h2>Pending Review</h2>
+    {% for item in pending %}
+    <div class="card" style="margin-bottom:1rem;border-left:3px solid var(--yellow)">
+        <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:0.75rem">
+            <div>
+                <span class="priority {% if item.priority >= 8 %}priority-high{% elif item.priority >= 4 %}priority-med{% else %}priority-low{% endif %}" style="font-size:1.1rem">P{{ item.priority }}</span>
+                <span style="font-size:1.1rem;font-weight:600;color:#fff;margin-left:0.75rem">{{ item.company }}</span>
+                <span class="badge badge-{{ item.status }}" style="margin-left:0.5rem">{{ item.status }}</span>
+            </div>
+        </div>
+
+        <div style="margin-bottom:0.75rem">
+            <div style="font-size:0.8rem;color:var(--text2);text-transform:uppercase;margin-bottom:0.25rem">Flagged Reasons</div>
+            {% for r in item.reasons %}
+            <div style="font-size:0.85rem;padding:0.25rem 0;border-bottom:1px solid var(--border)">{{ r }}</div>
+            {% endfor %}
+        </div>
+
+        {% if item.data %}
+        <div style="margin-bottom:0.75rem">
+            <div style="font-size:0.8rem;color:var(--text2);text-transform:uppercase;margin-bottom:0.25rem">Extracted Data</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.5rem">
+                {% for field in ['revenue','net_income','total_assets','total_liabilities'] %}
+                {% set f = item.data.get(field, {}) %}
+                {% if f %}
+                <div style="background:var(--surface2);padding:0.5rem 0.75rem;border-radius:6px">
+                    <div style="font-size:0.75rem;color:var(--text2)">{{ field|replace('_',' ')|title }}</div>
+                    <div style="font-family:var(--mono);color:#fff">{{ fmt_money(f.value) if f.value is not none else 'N/A' }}</div>
+                    <div class="conf-bar" style="margin-top:0.25rem">
+                        <div class="bar" style="width:60px"><div class="fill" style="width:{{ conf_pct(f.confidence) }}%;background:{{ conf_color(f.confidence) }}"></div></div>
+                        <span style="font-size:0.75rem;color:{{ conf_color(f.confidence) }}">{{ '%.0f'|format((f.confidence or 0)*100) }}%</span>
+                    </div>
+                </div>
+                {% endif %}
                 {% endfor %}
-            </td>
+            </div>
+        </div>
+        {% endif %}
+
+        <form method="POST" action="/review/decide" style="display:flex;gap:0.5rem;align-items:end;flex-wrap:wrap;margin-top:0.75rem">
+            <input type="hidden" name="company" value="{{ item.company }}">
+            <div style="flex:1;min-width:200px">
+                <label style="font-size:0.8rem;color:var(--text2);display:block;margin-bottom:0.25rem">Reviewer Notes</label>
+                <input type="text" name="notes" placeholder="Optional notes..."
+                    style="width:100%;padding:0.5rem 0.75rem;background:var(--surface2);border:1px solid var(--border);
+                    border-radius:6px;color:var(--text);font-size:0.9rem;outline:none">
+            </div>
+            <button type="submit" name="decision" value="approve"
+                style="padding:0.5rem 1.25rem;background:rgba(74,222,128,0.15);color:var(--green);
+                border:1px solid var(--green);border-radius:6px;cursor:pointer;font-weight:600;font-size:0.9rem">
+                Approve</button>
+            <button type="submit" name="decision" value="reject"
+                style="padding:0.5rem 1.25rem;background:rgba(248,113,113,0.15);color:var(--red);
+                border:1px solid var(--red);border-radius:6px;cursor:pointer;font-weight:600;font-size:0.9rem">
+                Reject</button>
+            <button type="submit" name="decision" value="escalate"
+                style="padding:0.5rem 1.25rem;background:rgba(251,191,36,0.15);color:var(--yellow);
+                border:1px solid var(--yellow);border-radius:6px;cursor:pointer;font-weight:600;font-size:0.9rem">
+                Escalate</button>
+        </form>
+    </div>
+    {% endfor %}
+    {% elif not decided %}
+    <div class="empty">No items in the review queue.</div>
+    {% endif %}
+
+    {% if decided %}
+    <h2 style="margin-top:2rem">Reviewed</h2>
+    <table>
+        <tr><th>Company</th><th>Decision</th><th>Notes</th><th>Reviewed</th></tr>
+        {% for item in decided %}
+        {% set d = decisions.get(item.company, {}) %}
+        <tr>
+            <td>{{ item.company }}</td>
+            <td><span class="badge {% if d.decision == 'approve' %}badge-success{% elif d.decision == 'reject' %}badge-failed{% else %}badge-partial{% endif %}">{{ d.decision }}</span></td>
+            <td style="color:var(--text2)">{{ d.notes or '—' }}</td>
+            <td style="color:var(--text2);font-size:0.85rem">{{ d.reviewed_at[:16] if d.reviewed_at else '' }}</td>
         </tr>
         {% endfor %}
     </table>
-    {% else %}
-    <div class="empty">No items in the review queue.</div>
     {% endif %}
-    """, rq=rq, items=items)
+    """, rq=rq, pending=pending, decided=decided, decisions=decisions)
     return render("Review Queue", content, "review")
+
+
+@app.route("/review/decide", methods=["POST"])
+def review_decide():
+    company = request.form.get("company", "")
+    decision = request.form.get("decision", "")
+    notes = request.form.get("notes", "")
+    if company and decision in ("approve", "reject", "escalate"):
+        save_review_decision(company, decision, notes)
+    return redirect(url_for("review_queue"))
 
 
 @app.route("/costs")
