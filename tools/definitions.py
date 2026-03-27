@@ -9,7 +9,10 @@ Each tool has:
 These map directly to the Claude API tool_use format.
 """
 
+import json
+
 from edgar.fetcher import lookup_cik, get_company_filings, fetch_filing_text
+from hooks import run_pre_hooks, run_post_hooks
 
 # ─── Tool Schemas ─────────────────────────────────────────────────────
 # These are sent to Claude via the `tools` parameter.
@@ -205,7 +208,17 @@ TOOLS = [
 # These execute when the model calls a tool.
 
 def handle_tool_call(name: str, input: dict) -> str:
-    """Route a tool call to the right handler and return the result as a string."""
+    """Route a tool call to the right handler and return the result as a string.
+
+    Hook integration (Phase 3):
+    - PreToolCall hooks run before execution (audit log, PII blocker)
+    - PostToolUse hooks run after execution (normalization, audit log)
+    """
+    # ── PreToolCall hooks ─────────────────────────────────────────
+    block = run_pre_hooks(name, input)
+    if block:
+        return json.dumps(block)
+
     handlers = {
         "lookup_company": _handle_lookup,
         "get_filings": _handle_get_filings,
@@ -218,19 +231,22 @@ def handle_tool_call(name: str, input: dict) -> str:
         return f'{{"error": "Unknown tool: {name}", "is_retryable": false}}'
 
     try:
-        return handler(input)
+        result_str = handler(input)
     except Exception as e:
-        return (
+        result_str = (
             f'{{"error": "{str(e)}", '
             f'"error_category": "transient", '
             f'"is_retryable": true, '
             f'"attempted": "{name}"}}'
         )
 
+    # ── PostToolUse hooks ─────────────────────────────────────────
+    result_str = run_post_hooks(name, input, result_str)
+    return result_str
+
 
 def _handle_lookup(input: dict) -> str:
     """Look up company CIK."""
-    import json
     name = input["company_name"]
     cik = lookup_cik(name)
     if cik:
@@ -245,7 +261,6 @@ def _handle_lookup(input: dict) -> str:
 
 def _handle_get_filings(input: dict) -> str:
     """Get list of filings for a CIK."""
-    import json
     cik = input["cik"]
     form_type = input.get("form_type", "10-K")
     filings = get_company_filings(cik, form_type)
@@ -261,7 +276,6 @@ def _handle_get_filings(input: dict) -> str:
 
 def _handle_fetch_filing(input: dict) -> str:
     """Fetch filing text content."""
-    import json
     url = input["url"]
     text = fetch_filing_text(url, max_chars=50000)
     if text.startswith("ERROR"):
@@ -285,7 +299,6 @@ def _handle_extract_financials(input: dict) -> str:
     When it calls this tool, the input IS the extracted data.
     We validate it and return the validation result.
     """
-    import json
     errors = _validate_extraction(input)
     if errors:
         return json.dumps({
@@ -347,5 +360,5 @@ def _validate_extraction(data: dict) -> list[str]:
 
 def _is_valid_date(s: str) -> bool:
     """Check if string is YYYY-MM-DD format."""
-    import re
+    import re  # local import — only used here
     return bool(re.match(r'^\d{4}-\d{2}-\d{2}$', s))

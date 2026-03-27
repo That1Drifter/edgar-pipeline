@@ -10,8 +10,12 @@ Multi-company comparison (uses coordinator + subagents):
     python run.py "Apple Inc" "Tesla Inc"
     python run.py "Apple Inc" "Microsoft Corp" "Google" --form 10-K
 
+Batch mode (10+ companies, 50% cheaper):
+    python run.py --batch "Apple Inc" "Tesla Inc" "Microsoft Corp" ...
+
 Options:
     --form 10-K|10-Q    Filing type (default: 10-K)
+    --batch             Use Message Batches API (cheaper, higher latency)
     --quiet             Suppress iteration-level output
 """
 
@@ -45,6 +49,7 @@ def main():
     companies = []
     form_type = "10-K"
     verbose = True
+    batch_mode = False
     i = 1
     while i < len(sys.argv):
         if sys.argv[i] == "--form" and i + 1 < len(sys.argv):
@@ -52,6 +57,9 @@ def main():
             i += 2
         elif sys.argv[i] == "--quiet":
             verbose = False
+            i += 1
+        elif sys.argv[i] == "--batch":
+            batch_mode = True
             i += 1
         elif not sys.argv[i].startswith("--"):
             companies.append(sys.argv[i])
@@ -73,13 +81,65 @@ def main():
     print(f"  SEC EDGAR Extraction Pipeline")
     print(f"  Companies: {', '.join(companies)}")
     print(f"  Filing:    {form_type}")
-    print(f"  Mode:      {'multi-agent coordinator' if len(companies) > 1 else 'single extraction'}")
+    if batch_mode:
+        mode = "batch (Message Batches API)"
+    elif len(companies) > 1:
+        mode = "multi-agent coordinator"
+    else:
+        mode = "single extraction"
+    print(f"  Mode:      {mode}")
     print(f"{'=' * 60}")
 
-    if len(companies) == 1:
+    if batch_mode:
+        run_batch_mode(companies, form_type, verbose)
+    elif len(companies) == 1:
         run_single(companies[0], form_type, verbose)
     else:
         run_multi(companies, form_type, verbose)
+
+
+def run_batch_mode(companies: list, form_type: str, verbose: bool):
+    """Batch processing — uses Message Batches API for bulk extraction."""
+    from agents.batch import run_batch
+
+    result = run_batch(companies, form_type, verbose=verbose)
+
+    if result.get("status") == "success":
+        # Save all results
+        os.makedirs("output", exist_ok=True)
+        path = "output/batch_results.json"
+        with open(path, "w") as f:
+            json.dump(result, f, indent=2, default=str)
+        print(f"\n  Saved to: {path}")
+
+        # Print per-company summaries
+        for r in result.get("results", []):
+            company = r.get("company", "?")
+            status = r.get("status", "?")
+            if status == "success":
+                data = r.get("data", {})
+                rev = data.get("revenue", {})
+                print(f"  {company}: revenue {rev.get('value')} {rev.get('unit', '')}")
+            elif status == "partial":
+                print(f"  {company}: partial — {r.get('validation_errors', ['?'])[0][:60]}")
+            else:
+                print(f"  {company}: failed — {r.get('error', '?')[:60]}")
+
+        # Run human review routing
+        from review import build_review_queue, save_review_queue, print_review_summary
+        queue = build_review_queue(result.get("results", []))
+        if queue["review_queue"]["needs_review"] > 0:
+            review_path = save_review_queue(queue)
+            print_review_summary(queue)
+            print(f"  Saved review queue: {review_path}")
+
+    elif result.get("status") == "timeout":
+        print(f"\n  Batch still processing. Check later:")
+        print(f"  Batch ID: {result.get('batch_id')}")
+    else:
+        print(f"\n  Batch failed: {result.get('error', 'Unknown')}")
+
+    print(f"{'=' * 60}\n")
 
 
 def run_single(company: str, form_type: str, verbose: bool):
@@ -93,6 +153,14 @@ def run_single(company: str, form_type: str, verbose: bool):
         print_extraction(result["data"], result["iterations"])
         path = save_result(result)
         print(f"\n  Saved to: {path}")
+
+        # Human review check
+        from review import check_needs_review
+        reasons = check_needs_review({"status": "success", "data": result["data"]})
+        if reasons:
+            print(f"\n  Flagged for review ({len(reasons)} reason(s)):")
+            for r in reasons:
+                print(f"    - {r}")
     else:
         print(f"  EXTRACTION FAILED: {result.get('message', 'Unknown error')}")
 
