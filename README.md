@@ -155,10 +155,10 @@ Browse extraction results, compare companies, review flagged items, track costs,
 
 | Mode | Cost per company | Notes |
 |------|-----------------|-------|
-| Single (Sonnet) | ~$0.29 | With prompt caching |
-| Multi-company | ~$0.12/company + $0.05 coordinator | Caching reduces repeat costs |
-| Batch | ~$0.06/company | 50% API discount, single-turn |
-| Haiku (dev) | ~$0.01 | Change MODEL constant in agent files |
+| Single (Sonnet) | ~$0.23-0.29 | With prompt caching, varies by filing size |
+| Multi-company | ~$0.30/company + $0.05 coordinator | Each researcher is a full extraction |
+| Batch | ~$0.03/company | 50% API discount, single-turn, no retry loop |
+| Haiku (dev) | ~$0.01 | `--model claude-haiku-4-5-20251001` |
 
 ## Output
 
