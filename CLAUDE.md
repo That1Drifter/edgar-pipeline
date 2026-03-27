@@ -21,6 +21,7 @@ run.py                      CLI entry point (single, multi, batch, streaming)
 ├── hooks.py                PreToolCall + PostToolUse hook system
 ├── review.py               Human review routing (confidence-based flagging)
 ├── costs.py                Token counting, CostTracker, price constants
+├── dashboard.py            Local web dashboard (Flask, reads output/)
 └── output/                 Extraction results, audit log, review queue (gitignored)
 ```
 
@@ -68,6 +69,11 @@ wsl -d Ubuntu -- bash -c "cd /home/that1drifter/edgar-pipeline && /home/that1dri
 
 # Batch mode (Message Batches API)
 wsl -d Ubuntu -- bash -c "cd /home/that1drifter/edgar-pipeline && /home/that1drifter/edgar-venv/bin/python run.py --batch 'Apple Inc' 'Tesla Inc' 'Microsoft Corp'"
+
+# Dashboard (runs on Windows, reads output/)
+pip install flask
+python dashboard.py
+# Open http://localhost:5000
 ```
 
 Sync files from Windows before running:

@@ -28,7 +28,7 @@ if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-MODEL = "claude-sonnet-4-20250514"
+MODEL = os.environ.get("EDGAR_MODEL", "claude-sonnet-4-20250514")
 
 # ─── Coordinator Tools ────────────────────────────────────────────────
 # The coordinator gets ONE tool: delegate_task.

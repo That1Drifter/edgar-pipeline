@@ -27,7 +27,7 @@ from costs import CostTracker
 
 # ─── Configuration ────────────────────────────────────────────────────
 
-MODEL = "claude-sonnet-4-20250514"
+MODEL = os.environ.get("EDGAR_MODEL", "claude-sonnet-4-20250514")
 MAX_ITERATIONS = 25  # Safety cap — graceful termination, not primary stopping mechanism
 MAX_RETRIES = 2      # For validation-retry loops
 

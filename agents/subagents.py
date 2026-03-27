@@ -14,6 +14,7 @@ This implements cert exam concepts:
 """
 
 import json
+import os
 import sys
 import io
 from anthropic import Anthropic
@@ -26,7 +27,7 @@ if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-MODEL = "claude-sonnet-4-20250514"
+MODEL = os.environ.get("EDGAR_MODEL", "claude-sonnet-4-20250514")
 
 # ─── Researcher Subagent ──────────────────────────────────────────────
 # Tools: lookup_company, get_filings, fetch_filing, extract_financials

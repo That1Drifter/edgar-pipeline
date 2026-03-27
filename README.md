@@ -54,6 +54,7 @@ run.py                      CLI entry point
 ├── hooks.py                Pre/post tool call hooks (audit, PII, normalization)
 ├── costs.py                Token counting and cost tracking
 ├── review.py               Human review routing for low-confidence extractions
+├── dashboard.py            Local web dashboard (Flask, dark theme)
 └── output/                 Results, audit log, review queue
 ```
 
@@ -125,10 +126,30 @@ python run.py --batch "Apple Inc" "Tesla Inc" "NVIDIA"  # batch mode (50% cheape
 python run.py --stream "Apple Inc"                      # streaming output
 python run.py --strict "Apple Inc"                      # strict schema enforcement
 python run.py --think "Apple Inc" "Tesla Inc"           # extended thinking on analysis
+python run.py --model claude-haiku-4-5-20251001 "Apple Inc"  # use Haiku (~$0.01)
 python run.py --quiet "Apple Inc"                       # suppress iteration output
 ```
 
 Flags can be combined: `--strict --stream`, `--strict --think`, etc.
+
+### Dashboard
+
+```bash
+pip install flask
+python dashboard.py
+# Open http://localhost:5000
+```
+
+Browse extraction results, compare companies, review flagged items, track costs, and inspect the audit log — all in a dark-themed web UI.
+
+| Page | Content |
+|------|---------|
+| Overview | Stats cards, recent extractions, success rate |
+| Extractions | Browse all results with financial data and confidence bars |
+| Comparisons | Multi-company comparison reports |
+| Review Queue | Priority-sorted flagged items |
+| Costs | Per-run cost breakdown with bar charts, cache savings |
+| Audit Log | Filterable tool call history |
 
 ## Cost
 
