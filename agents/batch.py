@@ -30,7 +30,7 @@ from anthropic.types.messages.batch_create_params import Request
 
 from edgar.fetcher import lookup_cik, get_company_filings, fetch_filing_text
 from hooks import run_post_hooks
-from tools.definitions import TOOLS
+from tools.definitions import TOOLS, TOOLS_STRICT
 
 if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -115,13 +115,15 @@ def prefetch_filings(companies: list[str], form_type: str = "10-K",
     return results
 
 
-def create_batch(prefetched: list[dict], verbose: bool = True) -> str | None:
+def create_batch(prefetched: list[dict], verbose: bool = True,
+                 strict: bool = False) -> str | None:
     """
     Phase 2: Submit a Message Batches API request for all ready filings.
 
     Returns the batch ID, or None if no requests to submit.
     """
     client = Anthropic()
+    tools = TOOLS_STRICT if strict else TOOLS
     requests = []
 
     for entry in prefetched:
@@ -150,7 +152,7 @@ def create_batch(prefetched: list[dict], verbose: bool = True) -> str | None:
                     model=MODEL,
                     max_tokens=4096,
                     system=BATCH_EXTRACTION_SYSTEM,
-                    tools=TOOLS,
+                    tools=tools,
                     tool_choice={"type": "any"},  # Force extraction tool call
                     messages=messages,
                 ),
@@ -312,7 +314,7 @@ def collect_results(batch_id: str, prefetched: list[dict],
 
 
 def run_batch(companies: list[str], form_type: str = "10-K",
-              verbose: bool = True) -> dict:
+              verbose: bool = True, strict: bool = False) -> dict:
     """
     Full batch extraction pipeline.
 
@@ -333,7 +335,7 @@ def run_batch(companies: list[str], form_type: str = "10-K",
 
     # Phase 2: Create batch
     print(f"\n  Phase 2: Creating batch...")
-    batch_id = create_batch(prefetched, verbose)
+    batch_id = create_batch(prefetched, verbose, strict=strict)
     if not batch_id:
         return {"status": "failed", "error": "Batch creation failed", "results": []}
 
